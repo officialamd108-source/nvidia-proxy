@@ -1,41 +1,47 @@
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
+export const config = {
+  runtime: 'edge', // This is the magic word that fixes the stream!
+};
 
+export default async function handler(req) {
+  // Handle the security check from Janitor AI
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return new Response(null, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      }
+    });
   }
 
   try {
+    // Read your message
+    const auth = req.headers.get('authorization');
+    const bodyText = await req.text();
+
+    // Forward it to NVIDIA
     const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': req.headers['authorization'],
+        'Authorization': auth,
       },
-      body: JSON.stringify(req.body),
+      body: bodyText,
     });
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    // Create the direct streaming pipe back to Janitor AI
+    const headers = new Headers(response.headers);
+    headers.set('Access-Control-Allow-Origin', '*');
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value));
-    }
-    res.end();
-
+    return new Response(response.body, {
+      status: response.status,
+      headers: headers
+    });
+    
   } catch (error) {
-    res.status(500).json({ error: "Proxy failed", details: error.message });
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Access-Control-Allow-Origin': '*' }
+    });
   }
 }
-
-export const config = {
-  maxDuration: 60,
-};
